@@ -88,23 +88,24 @@ M_ERROR = 30
 # Define all relevant parameters: changes should be made here
 
 params = {
-    'num_threads': {threads_per_task},  # total number of threads per process
-    'scale': {scale},  # scaling factor of the network size
+    'num_threads': 4,  # total number of threads per process
+    'scale': 1,  # scaling factor of the network size
     # total network size = scale*11250 neurons
-    'simtime': {model_time_sim},  # total simulation time in ms
-    'presimtime': {model_time_presim},  # simulation time until reaching equilibrium
+    'simtime': 1000,  # total simulation time in ms
+    'presimtime': 500,  # simulation time until reaching equilibrium
     'dt': 0.1,  # simulation step
-    'compressed_spikes': {compressed_spikes},  # whether to use spike compression
-    'record_spikes': {record_spikes},  # switch to record spikes of excitatory neurons to file
-    'rng_seed': {rng_seed},  # random number generator seed
+    'compressed_spikes': False,  # whether to use spike compression
+    'record_spikes': True,  # switch to record spikes of excitatory neurons to file
+    'rng_seed': 12345,  # random number generator seed
     'path_name': '.',  # path where all files will have to be written
     'log_file': 'logfile',  # naming scheme for the log files
-    'step_data_keys': '{step_data_keys}'  # metrics to be recorded at each time step
+    'step_data_keys': ''  # metrics to be recorded at each time step
 }
 step_data_keys = params['step_data_keys'].split(',')
+if step_data_keys == ['']:
+    step_data_keys = []
 
-
-def convert_synapse_weight(tau_m, tau_syn, C_m):
+def convert_synapse_weight_alpha(tau_m, tau_syn, C_m):
     """
     Computes conversion factor for synapse weight from mV to pA
 
@@ -124,6 +125,16 @@ def convert_synapse_weight(tau_m, tau_syn, C_m):
             b - t_rise * np.exp(-t_rise / tau_syn))
     return 1. / v_max
 
+def convert_synapses_weight_exp(tau_m, tau_syn, C_m):
+    
+    sub = 1.0 / (tau_syn - tau_m)
+    pre = tau_m * tau_syn / C_m * sub
+    frac = (tau_m / tau_syn) ** sub
+
+    PSC_over_PSP = 1.0 / (pre * (frac**tau_m - frac**tau_syn))
+    return PSC_over_PSP
+
+
 
 ###############################################################################
 # For compatibility with earlier benchmarks, we require a rise time of
@@ -134,10 +145,15 @@ def convert_synapse_weight(tau_m, tau_syn, C_m):
 
 
 tau_syn = 0.32582722403722841
+interrupt = False # Run with interruptions
 
 brunel_params = {
+    'with_stdp': False, # switch on STDP
+    'neuron_model': 'iaf_psc_exp', # 'iaf_psc_alpha' also possible
     'NE': int(9000 * params['scale']),  # number of excitatory neurons
     'NI': int(2250 * params['scale']),  # number of inhibitory neurons
+    'CE' : 1000, # number of incoming excitatory connection
+    'CI' : 1000, # number of incoming inhibitory connection
 
     'Nrec': 1000,  # number of neurons to record spikes from
 
@@ -203,6 +219,15 @@ def build_network():
     NI = brunel_params['NI']
     model_params = brunel_params['model_params']
     stdp_params = brunel_params['stdp_params']
+    neuron_model = brunel_params['neuron_model']
+    CE = brunel_params['CE']
+    CI = brunel_params['CI']
+    with_stdp = brunel_params['with_stdp']
+
+    if neuron_model == 'iaf_psc_exp':
+        convert_synapse_weight = convert_synapses_weight_exp
+    elif neuron_model == 'iaf_psc_alpha':
+        convert_synapse_weight = convert_synapse_weight_alpha
 
     # set global kernel parameters
     nest.SetKernelStatus({'local_num_threads': params['num_threads'],
@@ -211,15 +236,15 @@ def build_network():
                           'overwrite_files': True,
                           'use_compressed_spikes': params['compressed_spikes'],
                           'keep_source_table': False})
-    extra_params = {kwds}
+    extra_params = []
     if extra_params:
         nest.SetKernelStatus(extra_params)
 
     nest.message(M_INFO, 'build_network', 'Creating excitatory population.')
-    E_neurons = nest.Create('iaf_psc_alpha', NE, params=model_params)
+    E_neurons = nest.Create(neuron_model, NE, params=model_params)
 
     nest.message(M_INFO, 'build_network', 'Creating inhibitory population.')
-    I_neurons = nest.Create('iaf_psc_alpha', NI, params=model_params)
+    I_neurons = nest.Create(neuron_model, NI, params=model_params)
 
     if brunel_params['randomize_Vm']:
         nest.message(M_INFO, 'build_network',
@@ -229,11 +254,6 @@ def build_network():
                                        brunel_params['sigma_potential'])
         nest.GetLocalNodeCollection(E_neurons).V_m = random_vm
         nest.GetLocalNodeCollection(I_neurons).V_m = random_vm
-
-    # number of incoming excitatory connections
-    CE = int(1. * NE / params['scale'])
-    # number of incomining inhibitory connections
-    CI = int(1. * NI / params['scale'])
 
     nest.message(M_INFO, 'build_network',
                  'Creating excitatory stimulus generator.')
@@ -254,14 +274,24 @@ def build_network():
     nest.message(M_INFO, 'build_network',
                  'Creating excitatory spike recorder.')
 
-    if params['record_spikes']:
-        recorder_label = os.path.join(
-            brunel_params['filestem'],
-            'alpha_' + str(stdp_params['alpha']) + '_spikes')
-        E_recorder = nest.Create('spike_recorder', params={
-            'record_to': 'ascii',
-            'label': recorder_label
-        })
+    if with_stdp:
+        if params['record_spikes']:
+            recorder_label = os.path.join(
+                brunel_params['filestem'],
+                'alpha_' + str(stdp_params['alpha']) + '_spikes')
+            E_recorder = nest.Create('spike_recorder', params={
+                'record_to': 'ascii',
+                'label': recorder_label
+            })
+    else:
+        if params['record_spikes']:
+            recorder_label = os.path.join(
+                brunel_params['filestem'],
+                '_spikes')
+            E_recorder = nest.Create('spike_recorder', params={
+                'record_to': 'ascii',
+                'label': recorder_label
+            })
 
     BuildNodeTime = time.time() - tic
     node_memory = str(get_vmsize())
@@ -291,10 +321,16 @@ def build_network():
     nest.message(M_INFO, 'build_network',
                  'Connecting excitatory -> excitatory population.')
 
-    nest.Connect(E_neurons, E_neurons,
-                 {'rule': 'fixed_indegree', 'indegree': CE,
-                  'allow_autapses': False, 'allow_multapses': True},
-                 {'synapse_model': 'stdp_pl_synapse_hom_hpc'})
+    if with_stdp:
+        nest.Connect(E_neurons, E_neurons,
+                     {'rule': 'fixed_indegree', 'indegree': CE,
+                      'allow_autapses': False, 'allow_multapses': True},
+                     {'synapse_model': 'stdp_pl_synapse_hom_hpc'})
+    else:
+        nest.Connect(E_neurons, E_neurons,
+                     {'rule': 'fixed_indegree', 'indegree': CE,
+                      'allow_autapses': False, 'allow_multapses': True},
+                     {'synapse_model': 'syn_ex'})
 
     nest.message(M_INFO, 'build_network',
                  'Connecting inhibitory -> excitatory population.')
@@ -361,7 +397,7 @@ def build_network():
     return d, recorders
 
 
-def run_simulation():
+def run_simulation(interrupt):
     """Performs a simulation, including network construction"""
 
     nest.ResetKernel()
@@ -382,60 +418,75 @@ def run_simulation():
     init_memory_rss = str(get_rss())
     init_memory_peak = str(get_vmpeak())
 
-    presim_steps = int(params['presimtime'] // nest.min_delay)
-    presim_remaining_time = params['presimtime'] - (presim_steps * nest.min_delay)
-    sim_steps = int(params['simtime'] // nest.min_delay)
-    sim_remaining_time = params['simtime'] - (sim_steps * nest.min_delay)
+    if interrupt:
 
-    total_steps = presim_steps + sim_steps + (1 if presim_remaining_time > 0 else 0) + (
-        1 if sim_remaining_time > 0 else 0)
-    times, vmsizes, vmpeaks, vmrsss = (
-    np.empty(total_steps), np.empty(total_steps), np.empty(total_steps), np.empty(total_steps))
-    step_data = {key: np.empty(total_steps) for key in step_data_keys}
-    tic = time.time()
+        presim_steps = int(params['presimtime'] // nest.min_delay)
+        presim_remaining_time = params['presimtime'] - (presim_steps * nest.min_delay)
+        sim_steps = int(params['simtime'] // nest.min_delay)
+        sim_remaining_time = params['simtime'] - (sim_steps * nest.min_delay)
 
-    for d in range(presim_steps):
-        nest.Run(nest.min_delay)
-        times[d] = time.time() - tic
-        vmsizes[presim_steps] = get_vmsize()
-        vmpeaks[presim_steps] = get_vmpeak()
-        vmrsss[presim_steps] = get_rss()
-        for key in step_data_keys:
-            step_data[key][d] = getattr(nest, key)
+        total_steps = presim_steps + sim_steps + (1 if presim_remaining_time > 0 else 0) + (
+            1 if sim_remaining_time > 0 else 0)
+        times, vmsizes, vmpeaks, vmrsss = (
+        np.empty(total_steps), np.empty(total_steps), np.empty(total_steps), np.empty(total_steps))
+        step_data = {key: np.empty(total_steps) for key in step_data_keys}
+        tic = time.time()
 
-    if presim_remaining_time > 0:
-        nest.Run(presim_remaining_time)
-        times[presim_steps] = time.time() - tic
-        vmsizes[presim_steps + sim_steps] = get_vmsize()
-        vmpeaks[presim_steps + sim_steps] = get_vmpeak()
-        vmrsss[presim_steps + sim_steps] = get_rss()
-        for key in step_data_keys:
-            step_data[key][presim_steps] = getattr(nest, key)
-        presim_steps += 1
+        for d in range(presim_steps):
+            nest.Run(nest.min_delay)
+            times[d] = time.time() - tic
+            vmsizes[presim_steps] = get_vmsize()
+            vmpeaks[presim_steps] = get_vmpeak()
+            vmrsss[presim_steps] = get_rss()
+            for key in step_data_keys:
+                step_data[key][d] = getattr(nest, key)
 
-    PreparationTime = time.time() - tic
+        if presim_remaining_time > 0:
+            nest.Run(presim_remaining_time)
+            times[presim_steps] = time.time() - tic
+            vmsizes[presim_steps + sim_steps] = get_vmsize()
+            vmpeaks[presim_steps + sim_steps] = get_vmpeak()
+            vmrsss[presim_steps + sim_steps] = get_rss()
+            for key in step_data_keys:
+                step_data[key][presim_steps] = getattr(nest, key)
+            presim_steps += 1
 
-    time_simulate_presim = nest.kernel_status["time_simulate"]
+        PreparationTime = time.time() - tic
 
-    tic = time.time()
+        time_simulate_presim = nest.kernel_status["time_simulate"]
 
-    for d in range(sim_steps):
-        nest.Run(nest.min_delay)
-        times[presim_steps + d] = time.time() - tic
-        for key in step_data_keys:
-            step_data[key][presim_steps + d] = getattr(nest, key)
+        tic = time.time()
 
-    if sim_remaining_time > 0:
-        nest.Run(sim_remaining_time)
-        times[presim_steps + sim_steps] = time.time() - tic
-        for key in step_data_keys:
-            step_data[key][presim_steps + sim_steps] = getattr(nest, key)
-        sim_steps += 1
+        for d in range(sim_steps):
+            nest.Run(nest.min_delay)
+            times[presim_steps + d] = time.time() - tic
+            for key in step_data_keys:
+                step_data[key][presim_steps + d] = getattr(nest, key)
 
-    SimCPUTime = time.time() - tic
-    total_memory = str(get_vmsize())
-    total_memory_rss = str(get_rss())
-    total_memory_peak = str(get_vmpeak())
+        if sim_remaining_time > 0:
+            nest.Run(sim_remaining_time)
+            times[presim_steps + sim_steps] = time.time() - tic
+            for key in step_data_keys:
+                step_data[key][presim_steps + sim_steps] = getattr(nest, key)
+            sim_steps += 1
+
+        SimCPUTime = time.time() - tic
+        total_memory = str(get_vmsize())
+        total_memory_rss = str(get_rss())
+        total_memory_peak = str(get_vmpeak())
+
+    else:
+        tic = time.time()
+        nest.Run(params['presimtime'])
+        PreparationTime = time.time() - tic
+        
+        time_simulate_presim = nest.kernel_status["time_simulate"]
+        tic = time.time()
+        nest.Run(params['simtime'])
+        SimCPUTime = time.time() - tic
+        total_memory = str(get_vmsize())
+        total_memory_rss = str(get_rss())
+        total_memory_peak = str(get_vmpeak())
 
     average_rate = 0.0
     if params['record_spikes']:
@@ -462,16 +513,17 @@ def run_simulation():
 
     nest.Cleanup()
 
-    fn = '{fn}_{rank}.dat'.format(fn=params['log_file'], rank=nest.Rank())
-    with open(fn, 'w') as f:
-        for key, value in d.items():
-            f.write(key + ' ' + str(value) + '\n')
+    if interrupt:
+        fn = '{fn}_{rank}.dat'.format(fn=params['log_file'], rank=nest.Rank())
+        with open(fn, 'w') as f:
+            for key, value in d.items():
+                f.write(key + ' ' + str(value) + '\n')
 
-    fn = '{fn}_{rank}_steps.dat'.format(fn=params['log_file'], rank=nest.Rank())
-    with open(fn, 'w') as f:
-        f.write('time ' + ' '.join(step_data_keys) + '\n')
-        for d in range(presim_steps + sim_steps):
-            f.write(str(times[d]) + ' ' + ' '.join(str(step_data[key][d]) for key in step_data_keys) + '\n')
+        fn = '{fn}_{rank}_steps.dat'.format(fn=params['log_file'], rank=nest.Rank())
+        with open(fn, 'w') as f:
+            f.write('time ' + ' '.join(step_data_keys) + '\n')
+            for d in range(presim_steps + sim_steps):
+                f.write(str(times[d]) + ' ' + ' '.join(str(step_data[key][d]) for key in step_data_keys) + '\n')
 
 
 def compute_rate(sr):
@@ -530,4 +582,4 @@ def lambertwm1(x):
 
 
 if __name__ == '__main__':
-    run_simulation()
+    run_simulation(interrupt=interrupt)
