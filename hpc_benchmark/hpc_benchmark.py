@@ -245,7 +245,7 @@ def build_network():
                           'rng_seed': params['rng_seed'],
                           'overwrite_files': True,
                           'use_compressed_spikes': params['compressed_spikes'],
-                          'keep_source_table': False})
+                          'keep_source_table': True})
     extra_params = []
     if extra_params:
         nest.SetKernelStatus(extra_params)
