@@ -77,6 +77,8 @@ import os
 import time
 import scipy.special as sp
 
+import warnings
+
 import nest
 import nest.raster_plot
 
@@ -104,37 +106,6 @@ params = {
 step_data_keys = params['step_data_keys'].split(',')
 if step_data_keys == ['']:
     step_data_keys = []
-
-def convert_synapse_weight_alpha(tau_m, tau_syn, C_m):
-    """
-    Computes conversion factor for synapse weight from mV to pA
-
-    This function is specific to the leaky integrate-and-fire neuron
-    model with alpha-shaped postsynaptic currents.
-
-    """
-
-    # compute time to maximum of V_m after spike input
-    # to neuron at rest
-    a = tau_m / tau_syn
-    b = 1.0 / tau_syn - 1.0 / tau_m
-    t_rise = 1.0 / b * (-lambertwm1(-np.exp(-1.0 / a) / a).real - 1.0 / a)
-
-    v_max = np.exp(1.0) / (tau_syn * C_m * b) * (
-            (np.exp(-t_rise / tau_m) - np.exp(-t_rise / tau_syn)) /
-            b - t_rise * np.exp(-t_rise / tau_syn))
-    return 1. / v_max
-
-def convert_synapses_weight_exp(tau_m, tau_syn, C_m):
-    
-    sub = 1.0 / (tau_syn - tau_m)
-    pre = tau_m * tau_syn / C_m * sub
-    frac = (tau_m / tau_syn) ** sub
-
-    PSC_over_PSP = 1.0 / (pre * (frac**tau_m - frac**tau_syn))
-    return PSC_over_PSP
-
-
 
 ###############################################################################
 # For compatibility with earlier benchmarks, we require a rise time of
@@ -185,7 +156,7 @@ brunel_params = {
     'delay': 1.5,  # synaptic delay, all connections(ms)
 
     # synaptic weight
-    'JE': 0.14,  # peak of EPSP
+    'JE': 1.4,  # peak of EPSP
 
     'sigma_w': 3.47,  # standard dev. of E->E synapses(pA)
     'g': -5.0,
@@ -211,6 +182,45 @@ def build_network():
     """Builds the network including setting of simulation and neuron
     parameters, creation of neurons and connections
     """
+
+    def convert_synapse_weight_alpha(tau_m, tau_syn, C_m):
+        """
+        Computes conversion factor for synapse weight from mV to pA
+
+        This function is specific to the leaky integrate-and-fire neuron
+        model with alpha-shaped postsynaptic currents.
+
+        """
+
+        # compute time to maximum of V_m after spike input
+        # to neuron at rest
+        a = tau_m / tau_syn
+        b = 1.0 / tau_syn - 1.0 / tau_m
+        t_rise = 1.0 / b * (-lambertwm1(-np.exp(-1.0 / a) / a).real - 1.0 / a)
+
+        v_max = np.exp(1.0) / (tau_syn * C_m * b) * (
+                (np.exp(-t_rise / tau_m) - np.exp(-t_rise / tau_syn)) /
+                b - t_rise * np.exp(-t_rise / tau_syn))
+        return 1. / v_max
+
+    def convert_synapses_weight_exp(tau_m, tau_syn, C_m):
+        """
+        Computes conversion factor for synapse weight from mV to pA
+
+        This function is specific to the leaky integrate-and-fire neuron
+        model with exponential-shaped postsynaptic currents.
+
+        """
+        
+        sub = 1.0 / (tau_syn - tau_m)
+        pre = tau_m * tau_syn / C_m * sub
+        frac = (tau_m / tau_syn) ** sub
+
+        PSC_over_PSP = 1.0 / (pre * (frac**tau_m - frac**tau_syn))
+        return PSC_over_PSP
+
+    if brunel_params['with_stdp'] is False and interrupt:
+        warnings.warn('Running interrupted without STDP - results might not be written correctly.')
 
     tic = time.time()  # start timer on construction
 
@@ -278,7 +288,8 @@ def build_network():
         if params['record_spikes']:
             recorder_label = os.path.join(
                 brunel_params['filestem'],
-                'alpha_' + str(stdp_params['alpha']) + '_spikes')
+                'alpha_' + str(stdp_params['alpha']) + '_spikes_'
+                + brunel_params['neuron_model'])
             E_recorder = nest.Create('spike_recorder', params={
                 'record_to': 'ascii',
                 'label': recorder_label
@@ -287,7 +298,7 @@ def build_network():
         if params['record_spikes']:
             recorder_label = os.path.join(
                 brunel_params['filestem'],
-                '_spikes')
+                'spikes-' + brunel_params['neuron_model'])
             E_recorder = nest.Create('spike_recorder', params={
                 'record_to': 'ascii',
                 'label': recorder_label
