@@ -278,14 +278,6 @@ def build_network():
         model_params['tau_m'], model_params['tau_syn_ex'], model_params['C_m'])
     JE_pA = conversion_factor * brunel_params['JE']
 
-    nu_thresh = model_params['V_th'] / (
-            CE * model_params['tau_m'] / model_params['C_m'] *
-            JE_pA * np.exp(1.) * tau_syn)
-    nu_ext = nu_thresh * brunel_params['eta']
-
-    E_stimulus = nest.Create('poisson_generator', 1, {
-        'rate': nu_ext * CE * 1000.})
-
     nest.message(M_INFO, 'build_network',
                  'Creating excitatory spike recorder.')
 
@@ -333,16 +325,6 @@ def build_network():
     nest.SetDefaults('stdp_pl_synapse_hom_hpc', stdp_params)
 
     nest.message(M_INFO, 'build_network', 'Connecting stimulus generators.')
-
-    # Connect Poisson generator to neuron
-
-    nest.Connect(E_stimulus, E_neurons, {'rule': 'all_to_all'},
-                 {'synapse_model': 'syn_ex'})
-    nest.Connect(E_stimulus, I_neurons, {'rule': 'all_to_all'},
-                 {'synapse_model': 'syn_ex'})
-
-    nest.message(M_INFO, 'build_network',
-                 'Connecting excitatory -> excitatory population.')
 
     if with_stdp:
         nest.Connect(E_neurons, E_neurons,
@@ -441,8 +423,8 @@ def run_simulation(interrupt, num_neurons, indegree):
     build_dict, sr, neurons = build_network()
 
     E_neurons, I_neurons = neurons
-    E_neurons.I_e = 2.03 * brunel_params['model_params']['C_m'] / brunel_params['model_params']['tau_m']
-    I_neurons.I_e = 2.035 * brunel_params['model_params']['C_m'] / brunel_params['model_params']['tau_m']
+    E_neurons.I_e = 2.03 * brunel_params['model_params']['C_m']
+    I_neurons.I_e = 2.035 * brunel_params['model_params']['C_m']
 
 
     tic = time.time()
