@@ -423,7 +423,7 @@ def run_simulation(interrupt, num_neurons, indegree):
 
     NE = int(0.8 * num_neurons)
     NI = num_neurons - NE
-    
+
     brunel_params['NE'] = NE
     brunel_params['NI'] = NI
 
@@ -515,7 +515,7 @@ def run_simulation(interrupt, num_neurons, indegree):
         tic = time.time()
         nest.Run(params['presimtime'])
         PreparationTime = time.time() - tic
-        
+
         time_simulate_presim = nest.kernel_status["time_simulate"]
         tic = time.time()
         nest.Run(params['simtime'])
@@ -524,7 +524,6 @@ def run_simulation(interrupt, num_neurons, indegree):
         total_memory_rss = str(get_rss())
         total_memory_peak = str(get_vmpeak())
 
-    average_rate = 0.0
     if params['record_spikes']:
         average_rates = compute_rate(sr)
 
@@ -547,10 +546,15 @@ def run_simulation(interrupt, num_neurons, indegree):
     d.update(final_kernel_status)
     print(d)
 
-    import IPython
-    IPython.embed()
-
     nest.Cleanup()
+    data = {'E_rate': average_rates[0],
+            'I_rate': average_rates[1],
+            'simtime': final_kernel_status['time_simulate']}
+
+    save_string = ('/work/projects/hpc_benchmark_comparison/beNNch-models/hpc_benchmark/data'
+                   + f'/num_neurons_{num_neurons}_indegree_{indegree}')
+
+    np.save(save_string, data)
 
     if interrupt:
         fn = '{fn}_{rank}.dat'.format(fn=params['log_file'], rank=nest.Rank())
@@ -582,8 +586,8 @@ def compute_rate(sr):
     simtime = params['simtime']
     rate_E = 1. * n_local_spikes_E / (n_local_neurons_E * simtime) * 1e3
     rate_I = 1. * n_local_spikes_I / (n_local_neurons_I * simtime) * 1e3
- 
-    return (rate_E, rate_I) 
+
+    return (rate_E, rate_I)
 
 
 def _VmB(VmKey):
@@ -628,9 +632,11 @@ def lambertwm1(x):
 @click.command()
 @click.option('--num_neurons', default=1000, prompt='Number of neurons.')
 @click.option('--indegree', default=100, prompt='Indegree of single neurons')
-@click.option('--dc', default=2.0, prompt='Input current')
-def run(num_neurons, indegree, dc):
+def run(num_neurons, indegree):
     """Simple program that greets NAME for a total of COUNT times."""
+
+    num_neurons = int(num_neurons)
+    indegree = int(indegree)
 
     run_simulation(interrupt=False, num_neurons=num_neurons, indegree=indegree)
 
