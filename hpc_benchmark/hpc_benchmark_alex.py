@@ -423,8 +423,8 @@ def run_simulation(interrupt, num_neurons, indegree):
     build_dict, sr, neurons = build_network()
 
     E_neurons, I_neurons = neurons
-    E_neurons.I_e = 2.03 * brunel_params['model_params']['C_m']
-    I_neurons.I_e = 2.035 * brunel_params['model_params']['C_m']
+    E_neurons.I_e = 2.030 * brunel_params['model_params']['C_m'] * 1.07
+    I_neurons.I_e = 2.035 * brunel_params['model_params']['C_m'] * 1.07
 
 
     tic = time.time()
@@ -520,13 +520,15 @@ def run_simulation(interrupt, num_neurons, indegree):
          'total_memory_rss': total_memory_rss,
          'base_memory_peak': base_memory_peak,
          'init_memory_peak': init_memory_peak,
-         'total_memory_peak': total_memory_peak,
-         'average_rate': average_rate}
+         'total_memory_peak': total_memory_peak}
     d.update(build_dict)
     final_kernel_status = nest.kernel_status
     final_kernel_status["time_simulate"] -= time_simulate_presim
     d.update(final_kernel_status)
     print(d)
+
+    import IPython
+    IPython.embed()
 
     nest.Cleanup()
     data = {'E_rate': average_rates[0],
